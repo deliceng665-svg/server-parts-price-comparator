@@ -34,89 +34,74 @@ CORS(app, origins='*')
 
 
 # ─────────────────────────────────────────────
-# SearXNG 公共实例搜索（完全免费方案） - 最优选择
+# DuckDuckGo HTML 解析搜索（完全免费方案）
 # ─────────────────────────────────────────────
 import urllib.request
 import urllib.parse
 import ssl
 import re
 import requests
-import json
+from bs4 import BeautifulSoup
 
-# SearXNG 公共实例列表（完全免费，无需注册）
-SEARXNG_INSTANCES = [
-    "https://searx.be",
-    "https://search.disroot.org", 
-    "https://searx.tiekoetter.com",
-    "https://searx.info",
-    "https://searx.work"
-]
-
-def searxng_search(query, n=20, instance_url=None, tried_instances=None):
+def duckduckgo_search(query, n=20):
     """
-    使用 SearXNG 公共实例搜索
+    使用 DuckDuckGo HTML 页面解析搜索
     完全免费，无查询次数限制，无需注册
     """
-    if tried_instances is None:
-        tried_instances = set()
-    
     try:
-        # 如果没有指定实例，从列表中选择一个未尝试过的
-        if not instance_url:
-            available_instances = [inst for inst in SEARXNG_INSTANCES if inst not in tried_instances]
-            if not available_instances:
-                print(f"[SearXNG Search] 所有实例都已尝试过，返回空结果")
-                return []
-            instance_url = random.choice(available_instances)
-        
-        # 标记这个实例已经尝试过
-        tried_instances.add(instance_url)
-        
+        # DuckDuckGo HTML 版本搜索
         params = {
             'q': query,
-            'format': 'json',
-            'language': 'zh-CN',
-            'safesearch': 0,
-            'time_range': '',  # 不限时间
+            'kl': 'cn-zh',  # 中国中文
         }
         
-        response = requests.get(f"{instance_url}/search", params=params, timeout=15)
-        data = response.json()
+        url = f"https://html.duckduckgo.com/html/?{urllib.parse.urlencode(params)}"
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        }
+        
+        response = requests.get(url, headers=headers, timeout=15)
+        response.encoding = 'utf-8'
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
         
         items = []
-        for result in data.get('results', [])[:n]:
-            original_url = result.get('url', '')
+        # DuckDuckGo HTML 结果结构
+        for result in soup.select('.result')[:n]:
+            title_elem = result.select_one('.result__title a')
+            snippet_elem = result.select_one('.result__snippet')
+            
+            if not title_elem:
+                continue
+            
+            original_url = title_elem.get('href', '')
+            title = title_elem.get_text(strip=True)
+            snippet = snippet_elem.get_text(strip=True) if snippet_elem else ''
             
             # 转换搜索页链接为商品详情页
-            detail_url = convert_to_detail_url(original_url, result.get('title', ''))
+            detail_url = convert_to_detail_url(original_url, title)
             
             # 提取价格
-            snippet = result.get('content', '')
             price_match = re.search(r'¥\s*(\d+(?:\.\d+)?)', snippet) or re.search(r'(\d+(?:\.\d+)?)\s*元', snippet)
             price = int(price_match.group(1)) if price_match else 0
             
             items.append({
-                'title': result.get('title', ''),
-                'url': detail_url,  # 使用转换后的详情页链接
-                'original_url': original_url,  # 保留原链接用于调试
+                'title': title,
+                'url': detail_url,
+                'original_url': original_url,
                 'snippet': snippet,
                 'price': price,
                 'platform': platform_of(detail_url),
             })
         
-        print(f"[SearXNG Search] 查询成功: {query} -> 返回 {len(items)} 条结果 (实例: {instance_url})")
+        print(f"[DuckDuckGo Search] 查询成功: {query} -> 返回 {len(items)} 条结果")
         return items
     
     except Exception as e:
-        print(f"[SearXNG Search Error] {e} (实例: {instance_url})")
-        # 尝试下一个实例
-        remaining_instances = [inst for inst in SEARXNG_INSTANCES if inst not in tried_instances]
-        if remaining_instances:
-            next_instance = random.choice(remaining_instances)
-            print(f"[SearXNG Search] 尝试下一个实例: {next_instance}")
-            return searxng_search(query, n, next_instance, tried_instances)
-        
-        print(f"[SearXNG Search] 所有实例都失败，返回空结果")
+        print(f"[DuckDuckGo Search Error] {e}")
         return []
 
 # 演示模式配置
@@ -166,14 +151,12 @@ def convert_to_detail_url(url, title=""):
 
 def brave_search(query, n=20):
     """
-    兼容函数，根据配置选择搜索源
+    兼容函数，使用 DuckDuckGo HTML 解析搜索
     """
     if not DEMO_MODE:
-        # 使用 SearXNG 公共实例搜索（完全免费）
-        return searxng_search(query, n)
+        return duckduckgo_search(query, n)
     else:
-        # 演示模式返回空，让主函数使用演示数据
-        print(f"[SearXNG Search] 演示模式，使用内置演示数据")
+        print(f"[DuckDuckGo Search] 演示模式，使用内置演示数据")
         return []
 
 
@@ -466,7 +449,7 @@ def generate_demo_data(keyword):
 
 
 # ─────────────────────────────────────────────
-# 真实搜索（SearXNG 公共实例）
+# 真实搜索（DuckDuckGo HTML 解析）
 # ─────────────────────────────────────────────
 def real_search_platform(keyword, platform_query, platform_id, out_list, lock):
     query = f'{keyword} {platform_query}'
