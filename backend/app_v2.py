@@ -654,19 +654,13 @@ def real_search(keyword):
         for t in threads: t.start()
         for t in threads: t.join()
         
-        # 如果真实搜索结果太少，补充演示数据
-        if len(all_results) < 5:
-            print(f"[Real Search] 真实结果太少 ({len(all_results)}条)，补充演示数据")
-            demo_results, _ = demo_search(keyword)
-            all_results.extend(demo_results)
-        
-        prices = [r['price'] for r in all_results]
+        prices = [r['price'] for r in all_results if r.get('price', 0) > 0]
         trend  = gen_trend(min(prices)) if prices else []
         return all_results, trend
     else:
-        # 演示模式，直接返回演示数据
-        print(f"[Real Search] 演示模式，使用演示数据")
-        return demo_search(keyword)
+        # 演示模式，直接返回空，让前端显示提示
+        print(f"[Real Search] 演示模式，无数据")
+        return [], []
 
 def _get_condition_from_title(title):
     """从标题中判断商品成色"""
