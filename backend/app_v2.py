@@ -8,7 +8,22 @@ from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# 获取项目根目录（兼容本地开发和云部署）
+# 本地: backend/app_v2.py -> 上两级是项目根目录
+# 云端: 如果在根目录运行 gunicorn --chdir backend，需要正确找到静态文件
+_current_file = os.path.abspath(__file__)
+_backend_dir = os.path.dirname(_current_file)  # backend 目录
+BASE_DIR = os.path.dirname(_backend_dir)  # 项目根目录
+
+# 额外检查：如果静态文件不存在，尝试其他路径
+_static_test = os.path.join(BASE_DIR, 'static')
+if not os.path.exists(_static_test):
+    # 可能是在根目录运行，尝试当前工作目录
+    BASE_DIR = os.getcwd()
+    _static_test = os.path.join(BASE_DIR, 'static')
+    if not os.path.exists(_static_test):
+        # 再尝试上一级
+        BASE_DIR = os.path.dirname(BASE_DIR)
 BRAVE_SEARCH_JS = os.path.expanduser('~/.workbuddy/skills/brave-search/search.js')
 DEMO_MODE = os.getenv('DEMO_MODE', 'true').lower() == 'true'
 SESSION_NAME = "parts-search"
