@@ -12,9 +12,10 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BRAVE_SEARCH_JS = os.path.expanduser('~/.workbuddy/skills/brave-search/search.js')
 DEMO_MODE = os.getenv('DEMO_MODE', 'true').lower() == 'true'
 SESSION_NAME = "parts-search"
+PORT = int(os.getenv('PORT', 5001))
 
 app = Flask(__name__, static_folder=os.path.join(BASE_DIR, 'static'))
-CORS(app)
+CORS(app, origins='*')
 
 
 # ─────────────────────────────────────────────
