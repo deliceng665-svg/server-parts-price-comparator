@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>服务器配件价格对比查询器</title>
+  <meta name="description" content="同步抓取淘宝、闲鱼、京东的服务器配件价格，支持批量查询、趋势分析、Excel导出">
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <!-- SheetJS (xlsx 导出) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <link rel="stylesheet" href="static/css/style.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- ══ 顶栏 ══════════════════════════════════════ -->
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="logo"><span class="logo-icon">🖥️</span>服务器配件价格对比</div>
+      <div class="topbar-sep"></div>
+      <div class="topbar-sub">同步抓取淘宝 · 闲鱼 · 京东，覆盖高中低价段</div>
+    </div>
+  </header>
+
+  <!-- ══ 搜索区 ══════════════════════════════════════ -->
+  <section class="search-section">
+
+    <div class="search-card">
+      <div class="search-row">
+        <!-- 分类筛选 -->
+        <select id="categorySelect" class="category-select">
+          <option value="">全部分类</option>
+          <option value="服务器">服务器</option>
+          <option value="显卡">显卡</option>
+          <option value="内存">内存</option>
+          <option value="硬盘">硬盘</option>
+          <option value="电源">电源</option>
+          <option value="主板">主板</option>
+          <option value="CPU">CPU</option>
+          <option value="RAID卡">RAID卡</option>
+          <option value="网卡">网卡</option>
+          <option value="风扇">风扇</option>
+          <option value="其他">其他</option>
+        </select>
+        <div class="search-input-wrap">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="searchInput"
+            placeholder="输入型号，多个用逗号分隔，如：Xeon 6130, Dell R720 主板, 32GB DDR4 ECC">
+        </div>
+        <button id="searchBtn" onclick="doSearch()">
+          <span class="btn-label">查 询</span>
+          <span class="btn-spinner" style="display:none">⏳</span>
+        </button>
+      </div>
+      <div class="search-hints">
+        💡 支持批量输入多个型号，用<span>逗号</span>或<span>换行</span>分隔 &nbsp;·&nbsp; <span>Enter</span> 快速查询
+      </div>
+    </div>
+
+    <!-- 历史记录 -->
+    <div class="history-bar" id="historyBar" style="display:none">
+      <span class="history-label">历史查询：</span>
+      <div class="history-tags" id="historyTags"></div>
+      <button class="history-clear" onclick="clearHistory()">清空</button>
+    </div>
+
+    <!-- Cookie 输入区 -->
+    <div class="cookie-section" id="cookieSection">
+      <div class="cookie-header">
+        <span class="cookie-title">🔐 平台 Cookie 设置</span>
+        <button class="cookie-toggle" onclick="toggleCookiePanel()">
+          <span id="cookieToggleIcon">展开</span>
+        </button>
+      </div>
+      <div class="cookie-warning">
+        ⚠️ Cookie 用于本地抓取，仅本地保存（localStorage），请勿泄露给他人！
+      </div>
+      <div class="cookie-panel" id="cookiePanel" style="display:none">
+        <div class="cookie-grid">
+          <div class="cookie-item">
+            <label class="cookie-label">🛒 淘宝 Cookie</label>
+            <textarea id="taobaoCookie" placeholder="粘贴淘宝 Cookie（登录后从浏览器开发者工具获取）" rows="3"></textarea>
+          </div>
+          <div class="cookie-item">
+            <label class="cookie-label">🐟 闲鱼 Cookie</label>
+            <textarea id="xianyuCookie" placeholder="粘贴闲鱼 Cookie（登录后从浏览器开发者工具获取）" rows="3"></textarea>
+          </div>
+          <div class="cookie-item">
+            <label class="cookie-label">🏪 京东 Cookie</label>
+            <textarea id="jdCookie" placeholder="粘贴京东 Cookie（登录后从浏览器开发者工具获取）" rows="3"></textarea>
+          </div>
+        </div>
+        <div class="cookie-actions">
+          <button class="cookie-btn save" onclick="saveCookies()">💾 保存 Cookie</button>
+          <button class="cookie-btn clear" onclick="clearCookies()">🗑️ 清除所有 Cookie</button>
+        </div>
+        <div class="cookie-status" id="cookieStatus"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ 结果区 ══════════════════════════════════════ -->
+  <section id="resultsSection" style="display:none">
+
+    <!-- 顶部操作栏 -->
+    <div class="result-toolbar">
+      <div class="result-title" id="resultTitle"></div>
+      <div class="toolbar-actions">
+        <button class="action-btn export-btn" onclick="exportExcel()">📥 导出 Excel</button>
+      </div>
+    </div>
+
+    <!-- 多型号 Tab -->
+    <div class="keyword-tabs" id="keywordTabs"></div>
+
+    <!-- 每个型号的内容面板 -->
+    <div id="keywordPanels"></div>
+
+  </section>
+
+  <!-- ══ 加载遮罩 ══════════════════════════════════════ -->
+  <div class="loading-overlay" id="loadingOverlay" style="display:none">
+    <div class="loading-box">
+      <div class="spin-ring"></div>
+      <p class="loading-text" id="loadingText">正在从各平台获取数据…</p>
+    </div>
+  </div>
+
+  <!-- ══ 商品详情弹窗 ══════════════════════════════════════ -->
+  <div class="modal-overlay" id="detailModal" onclick="closeModal(event)">
+    <div class="modal-box" id="modalBox">
+
+      <!-- 弹窗头部 -->
+      <div class="modal-header">
+        <button class="modal-close" onclick="closeDetailModal()" title="关闭">✕</button>
+
+        <div class="modal-platform-row">
+          <div class="modal-platform-icon" id="modalPlatformIcon"></div>
+          <div class="modal-platform-name" id="modalPlatformName"></div>
+          <div class="modal-platform-badge" id="modalPlatformBadge"></div>
+        </div>
+
+        <div class="modal-price-big" id="modalPrice">
+          <span class="currency">¥</span><span id="modalPriceNum">--</span>
+        </div>
+      </div>
+
+      <!-- 弹窗主体 -->
+      <div class="modal-body">
+        <div class="modal-title" id="modalTitle">--</div>
+
+        <div class="modal-meta-grid" id="modalMetaGrid">
+          <!-- 动态插入 meta 项 -->
+        </div>
+
+        <div class="modal-notice">
+          <span class="modal-notice-icon">⚠️</span>
+          <span>点击「去平台查看」将跳转至该平台的商品页，部分平台可能需要登录后才能查看完整信息。</span>
+        </div>
+      </div>
+
+      <!-- 弹窗底部 -->
+      <div class="modal-footer">
+        <button class="modal-btn-cancel" onclick="closeDetailModal()">关闭</button>
+        <button class="modal-btn-visit" id="modalVisitBtn" onclick="visitPlatform()">
+          <span>去平台查看</span>
+          <span>→</span>
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+</div><!-- /app -->
+
+<script src="static/js/app.js"></script>
+</body>
+</html>
