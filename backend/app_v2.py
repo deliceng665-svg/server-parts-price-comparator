@@ -34,7 +34,7 @@ CORS(app, origins='*')
 
 
 # ─────────────────────────────────────────────
-# DuckDuckGo HTML 解析搜索（完全免费方案）
+# 京东搜索（直接爬取）
 # ─────────────────────────────────────────────
 import urllib.request
 import urllib.parse
@@ -43,22 +43,160 @@ import re
 import requests
 from bs4 import BeautifulSoup
 
-def duckduckgo_search(query, n=20):
-    """
-    使用 DuckDuckGo HTML 页面解析搜索
-    完全免费，无查询次数限制，无需注册
-    """
+def jd_search(query, n=20):
+    """直接爬取京东搜索结果"""
     try:
-        # DuckDuckGo HTML 版本搜索
+        params = {
+            'keyword': query,
+            'wq': query,
+            'page': 1,
+        }
+        
+        url = f"https://search.jd.com/Search?" + urllib.parse.urlencode(params)
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1',
+            'Referer': 'https://www.jd.com/',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'zh-CN,zh;q=0.9',
+        }
+        
+        response = requests.get(url, headers=headers, timeout=15)
+        response.encoding = 'utf-8'
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        items = []
+        
+        # 京东搜索结果结构
+        for item in soup.select('.gl-item')[:n]:
+            try:
+                title_elem = item.select_one('.p-name em') or item.select_one('.p-name')
+                price_elem = item.select_one('.p-price i') or item.select_one('.p-price strong i')
+                link_elem = item.select_one('.p-name a')
+                
+                if not title_elem:
+                    continue
+                
+                title = title_elem.get_text(strip=True)
+                # 清理标题中的HTML标签
+                title = re.sub(r'<[^>]+>', '', title)
+                
+                price_text = price_elem.get_text(strip=True) if price_elem else '0'
+                price = int(float(price_text))
+                
+                detail_url = link_elem.get('href', '') if link_elem else ''
+                if detail_url and not detail_url.startswith('http'):
+                    detail_url = 'https:' + detail_url
+                
+                # 店铺信息
+                shop_elem = item.select_one('.p-shop')
+                seller = shop_elem.get_text(strip=True) if shop_elem else '京东自营'
+                
+                # 销量
+                sales_elem = item.select_one('.p-commit')
+                sales = sales_elem.get_text(strip=True) if sales_elem else ''
+                
+                items.append({
+                    'title': title,
+                    'url': detail_url,
+                    'price': price,
+                    'seller': seller,
+                    'sales': sales,
+                    'platform': 'jd',
+                    'snippet': f'{seller} | 销量 {sales}',
+                })
+            except:
+                continue
+        
+        print(f"[JD Search] 查询成功: {query} -> 返回 {len(items)} 条结果")
+        return items
+    
+    except Exception as e:
+        print(f"[JD Search Error] {e}")
+        return []
+
+
+def taobao_search(query, n=20):
+    """直接爬取淘宝搜索结果"""
+    try:
         params = {
             'q': query,
-            'kl': 'cn-zh',  # 中国中文
+            'sort': 'sale-desc',
+        }
+        
+        url = f"https://s.taobao.com/search?" + urllib.parse.urlencode(params)
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1',
+            'Referer': 'https://www.taobao.com/',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'zh-CN,zh;q=0.9',
+        }
+        
+        response = requests.get(url, headers=headers, timeout=15)
+        response.encoding = 'utf-8'
+        
+        # 淘宝使用JSON数据
+        items = []
+        
+        # 从页面提取JSON数据
+        json_match = re.search(r'g_page_config\s*=\s*(\{.*?\});', response.text, re.DOTALL)
+        if not json_match:
+            # 尝试另一种方式
+            json_match = re.search(r'"auctions":\s*(\[.*?\])', response.text, re.DOTALL)
+        
+        if json_match:
+            try:
+                import json
+                data = json.loads(json_match.group(1))
+                for item in data[:n]:
+                    title = item.get('title', '')
+                    raw_title = item.get('raw_title', '')
+                    title = title or raw_title
+                    
+                    price = int(float(item.get('view_price', 0)))
+                    detail_url = item.get('detail_url', '')
+                    if detail_url and not detail_url.startswith('http'):
+                        detail_url = 'https:' + detail_url
+                    
+                    seller = item.get('nick', '')
+                    sales = item.get('view_sales', '').replace('人付款', '').replace('人收货', '')
+                    
+                    items.append({
+                        'title': title,
+                        'url': detail_url,
+                        'price': price,
+                        'seller': seller,
+                        'sales': sales,
+                        'platform': 'taobao',
+                        'snippet': f'{seller} | 销量 {sales}',
+                    })
+            except Exception as e:
+                print(f"[Taobao Parse Error] {e}")
+        
+        print(f"[Taobao Search] 查询成功: {query} -> 返回 {len(items)} 条结果")
+        return items
+    
+    except Exception as e:
+        print(f"[Taobao Search Error] {e}")
+        return []
+
+
+def duckduckgo_search(query, n=20):
+    """
+    使用 DuckDuckGo HTML 页面解析搜索（备用方案）
+    """
+    try:
+        params = {
+            'q': query,
+            'kl': 'cn-zh',
         }
         
         url = f"https://html.duckduckgo.com/html/?{urllib.parse.urlencode(params)}"
         
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
         }
@@ -69,7 +207,6 @@ def duckduckgo_search(query, n=20):
         soup = BeautifulSoup(response.text, 'html.parser')
         
         items = []
-        # DuckDuckGo HTML 结果结构
         for result in soup.select('.result')[:n]:
             title_elem = result.select_one('.result__title a')
             snippet_elem = result.select_one('.result__snippet')
@@ -81,17 +218,13 @@ def duckduckgo_search(query, n=20):
             title = title_elem.get_text(strip=True)
             snippet = snippet_elem.get_text(strip=True) if snippet_elem else ''
             
-            # 转换搜索页链接为商品详情页
             detail_url = convert_to_detail_url(original_url, title)
-            
-            # 提取价格
-            price_match = re.search(r'¥\s*(\d+(?:\.\d+)?)', snippet) or re.search(r'(\d+(?:\.\d+)?)\s*元', snippet)
+            price_match = re.search(r'¥\s*(\d+(?:\.\d+)?)', snippet)
             price = int(price_match.group(1)) if price_match else 0
             
             items.append({
                 'title': title,
                 'url': detail_url,
-                'original_url': original_url,
                 'snippet': snippet,
                 'price': price,
                 'platform': platform_of(detail_url),
@@ -104,8 +237,8 @@ def duckduckgo_search(query, n=20):
         print(f"[DuckDuckGo Search Error] {e}")
         return []
 
-# 演示模式配置 - 临时启用演示模式保证可用
-DEMO_MODE = os.getenv('DEMO_MODE', 'true').lower() == 'true'
+# 演示模式配置 - 关闭，使用真实搜索
+DEMO_MODE = os.getenv('DEMO_MODE', 'false').lower() == 'true'
 
 def extract_item_id(url):
     """从各种电商链接中提取商品ID"""
@@ -151,13 +284,32 @@ def convert_to_detail_url(url, title=""):
 
 def brave_search(query, n=20):
     """
-    兼容函数，使用 DuckDuckGo HTML 解析搜索
+    真实搜索：优先使用京东+淘宝
     """
-    if not DEMO_MODE:
-        return duckduckgo_search(query, n)
-    else:
-        print(f"[DuckDuckGo Search] 演示模式，使用内置演示数据")
+    if DEMO_MODE:
+        print(f"[Search] 演示模式，使用内置演示数据")
         return []
+    
+    all_results = []
+    
+    # 1. 先尝试京东搜索
+    jd_results = jd_search(query, n // 2 + 2)
+    if jd_results:
+        all_results.extend(jd_results)
+        print(f"[Search] 京东返回 {len(jd_results)} 条结果")
+    
+    # 2. 再尝试淘宝搜索
+    taobao_results = taobao_search(query, n // 2 + 2)
+    if taobao_results:
+        all_results.extend(taobao_results)
+        print(f"[Search] 淘宝返回 {len(taobao_results)} 条结果")
+    
+    # 3. 如果都没数据，尝试 DuckDuckGo 作为备用
+    if not all_results:
+        print(f"[Search] 京东和淘宝都失败，尝试 DuckDuckGo")
+        all_results = duckduckgo_search(query, n)
+    
+    return all_results
 
 
 # ─────────────────────────────────────────────
