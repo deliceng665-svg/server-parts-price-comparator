@@ -34,19 +34,93 @@ CORS(app, origins='*')
 
 
 # ─────────────────────────────────────────────
-# Google Custom Search API（免费方案） - 优化版
+# SearXNG 公共实例搜索（完全免费方案） - 最优选择
 # ─────────────────────────────────────────────
 import urllib.request
 import urllib.parse
 import ssl
 import re
+import requests
+import json
 
-# Google Custom Search API 配置
-GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY', '')
-GOOGLE_CSE_ID = os.getenv('GOOGLE_CSE_ID', '')
+# SearXNG 公共实例列表（完全免费，无需注册）
+SEARXNG_INSTANCES = [
+    "https://searx.be",
+    "https://search.disroot.org", 
+    "https://searx.tiekoetter.com",
+    "https://searx.info",
+    "https://searx.work"
+]
 
-# 如果没有配置 API，使用演示数据
-DEMO_MODE = os.getenv('DEMO_MODE', 'true').lower() == 'true' or not GOOGLE_API_KEY or not GOOGLE_CSE_ID
+def searxng_search(query, n=20, instance_url=None, tried_instances=None):
+    """
+    使用 SearXNG 公共实例搜索
+    完全免费，无查询次数限制，无需注册
+    """
+    if tried_instances is None:
+        tried_instances = set()
+    
+    try:
+        # 如果没有指定实例，从列表中选择一个未尝试过的
+        if not instance_url:
+            available_instances = [inst for inst in SEARXNG_INSTANCES if inst not in tried_instances]
+            if not available_instances:
+                print(f"[SearXNG Search] 所有实例都已尝试过，返回空结果")
+                return []
+            instance_url = random.choice(available_instances)
+        
+        # 标记这个实例已经尝试过
+        tried_instances.add(instance_url)
+        
+        params = {
+            'q': query,
+            'format': 'json',
+            'language': 'zh-CN',
+            'safesearch': 0,
+            'time_range': '',  # 不限时间
+        }
+        
+        response = requests.get(f"{instance_url}/search", params=params, timeout=15)
+        data = response.json()
+        
+        items = []
+        for result in data.get('results', [])[:n]:
+            original_url = result.get('url', '')
+            
+            # 转换搜索页链接为商品详情页
+            detail_url = convert_to_detail_url(original_url, result.get('title', ''))
+            
+            # 提取价格
+            snippet = result.get('content', '')
+            price_match = re.search(r'¥\s*(\d+(?:\.\d+)?)', snippet) or re.search(r'(\d+(?:\.\d+)?)\s*元', snippet)
+            price = int(price_match.group(1)) if price_match else 0
+            
+            items.append({
+                'title': result.get('title', ''),
+                'url': detail_url,  # 使用转换后的详情页链接
+                'original_url': original_url,  # 保留原链接用于调试
+                'snippet': snippet,
+                'price': price,
+                'platform': platform_of(detail_url),
+            })
+        
+        print(f"[SearXNG Search] 查询成功: {query} -> 返回 {len(items)} 条结果 (实例: {instance_url})")
+        return items
+    
+    except Exception as e:
+        print(f"[SearXNG Search Error] {e} (实例: {instance_url})")
+        # 尝试下一个实例
+        remaining_instances = [inst for inst in SEARXNG_INSTANCES if inst not in tried_instances]
+        if remaining_instances:
+            next_instance = random.choice(remaining_instances)
+            print(f"[SearXNG Search] 尝试下一个实例: {next_instance}")
+            return searxng_search(query, n, next_instance, tried_instances)
+        
+        print(f"[SearXNG Search] 所有实例都失败，返回空结果")
+        return []
+
+# 演示模式配置
+DEMO_MODE = os.getenv('DEMO_MODE', 'false').lower() == 'true'
 
 def extract_item_id(url):
     """从各种电商链接中提取商品ID"""
@@ -88,81 +162,18 @@ def convert_to_detail_url(url, title=""):
     # 无法转换，返回原链接
     return url
 
-def google_search(query, n=20):
-    """
-    使用 Google Custom Search JSON API 搜索
-    免费额度：每天100次查询
-    文档：https://developers.google.com/custom-search/v1/overview
-    """
-    if DEMO_MODE:
-        print(f"[Google Search] 演示模式或未配置 API，返回演示数据")
-        return []
-    
-    try:
-        # 构建请求
-        base_url = "https://www.googleapis.com/customsearch/v1"
-        params = {
-            'key': GOOGLE_API_KEY,
-            'cx': GOOGLE_CSE_ID,
-            'q': query,
-            'num': min(n, 10),  # Google API 单次最多10条
-            'lr': 'lang_zh-CN',
-            'gl': 'cn',
-            'cr': 'countryCN',
-            'safe': 'off',
-        }
-        
-        url = f"{base_url}?{urllib.parse.urlencode(params)}"
-        
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        
-        req = urllib.request.Request(url)
-        req.add_header('Accept', 'application/json')
-        
-        with urllib.request.urlopen(req, timeout=15, context=ctx) as response:
-            data = json.loads(response.read().decode('utf-8'))
-        
-        # 解析结果
-        items = []
-        results = data.get('items', [])
-        for r in results[:n]:
-            original_url = r.get('link', '')
-            
-            # 转换搜索页链接为商品详情页
-            detail_url = convert_to_detail_url(original_url, r.get('title', ''))
-            
-            # 提取价格
-            snippet = r.get('snippet', '')
-            price_match = re.search(r'¥\s*(\d+(?:\.\d+)?)', snippet) or re.search(r'(\d+(?:\.\d+)?)\s*元', snippet)
-            price = int(price_match.group(1)) if price_match else 0
-            
-            items.append({
-                'title': r.get('title', ''),
-                'url': detail_url,  # 使用转换后的详情页链接
-                'original_url': original_url,  # 保留原链接用于调试
-                'snippet': snippet,
-                'price': price,
-                'platform': platform_of(detail_url),
-            })
-        
-        print(f"[Google Search] 查询成功: {query} -> 返回 {len(items)} 条结果")
-        return items
-    
-    except Exception as e:
-        print(f"[Google Search Error] {e}")
-        return []
+
 
 def brave_search(query, n=20):
     """
     兼容函数，根据配置选择搜索源
     """
     if not DEMO_MODE:
-        return google_search(query, n)
+        # 使用 SearXNG 公共实例搜索（完全免费）
+        return searxng_search(query, n)
     else:
         # 演示模式返回空，让主函数使用演示数据
-        print(f"[Brave Search] 演示模式，使用内置演示数据")
+        print(f"[SearXNG Search] 演示模式，使用内置演示数据")
         return []
 
 
@@ -455,7 +466,7 @@ def generate_demo_data(keyword):
 
 
 # ─────────────────────────────────────────────
-# 真实搜索（Google Custom Search API）
+# 真实搜索（SearXNG 公共实例）
 # ─────────────────────────────────────────────
 def real_search_platform(keyword, platform_query, platform_id, out_list, lock):
     query = f'{keyword} {platform_query}'
