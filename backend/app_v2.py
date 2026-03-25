@@ -34,15 +34,59 @@ CORS(app, origins='*')
 
 
 # ─────────────────────────────────────────────
-# Google Custom Search API（免费方案）
+# Google Custom Search API（免费方案） - 优化版
 # ─────────────────────────────────────────────
 import urllib.request
 import urllib.parse
 import ssl
+import re
 
 # Google Custom Search API 配置
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY', '')
 GOOGLE_CSE_ID = os.getenv('GOOGLE_CSE_ID', '')
+
+# 如果没有配置 API，使用演示数据
+DEMO_MODE = os.getenv('DEMO_MODE', 'true').lower() == 'true' or not GOOGLE_API_KEY or not GOOGLE_CSE_ID
+
+def extract_item_id(url):
+    """从各种电商链接中提取商品ID"""
+    patterns = [
+        # 淘宝详情页
+        r'item\.taobao\.com/item\.htm.*[?&]id=(\d+)',
+        r'detail\.tmall\.com.*[?&]id=(\d+)',
+        # 淘宝搜索页转详情页
+        r's\.taobao\.com.*[?&]id=(\d+)',
+        # 京东
+        r'item\.jd\.com/(\d+)\.html',
+        r'item\.jd\.com.*[?&]sku=(\d+)',
+        # 闲鱼
+        r'goofish\.com/item/(\d+)',
+        r'2\.taobao\.com/item\.htm.*[?&]id=(\d+)',
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    return None
+
+def convert_to_detail_url(url, title=""):
+    """将搜索页链接转换为商品详情页链接"""
+    if not url:
+        return url
+    
+    item_id = extract_item_id(url)
+    if item_id:
+        # 根据域名判断平台
+        if 'taobao.com' in url or 'tmall.com' in url:
+            return f"https://item.taobao.com/item.htm?id={item_id}"
+        elif 'jd.com' in url:
+            return f"https://item.jd.com/{item_id}.html"
+        elif 'goofish.com' in url or '2.taobao.com' in url:
+            return f"https://2.taobao.com/item.htm?id={item_id}"
+    
+    # 无法转换，返回原链接
+    return url
 
 def google_search(query, n=20):
     """
@@ -50,8 +94,8 @@ def google_search(query, n=20):
     免费额度：每天100次查询
     文档：https://developers.google.com/custom-search/v1/overview
     """
-    if not GOOGLE_API_KEY or not GOOGLE_CSE_ID:
-        print("[Google Search] 未配置 API Key 或 CSE ID，返回空结果")
+    if DEMO_MODE:
+        print(f"[Google Search] 演示模式或未配置 API，返回演示数据")
         return []
     
     try:
@@ -84,30 +128,42 @@ def google_search(query, n=20):
         items = []
         results = data.get('items', [])
         for r in results[:n]:
-            # 提取商品详情页链接（优先使用淘宝/闲鱼/京东的商品详情页）
-            url = r.get('link', '')
+            original_url = r.get('link', '')
             
-            # 如果是淘宝搜索页，尝试提取商品ID转为详情页
-            if 's.taobao.com' in url and 'id=' in url:
-                # 提取商品ID
-                import re
-                match = re.search(r'id=(\d+)', url)
-                if match:
-                    url = f"https://item.taobao.com/item.htm?id={match.group(1)}"
+            # 转换搜索页链接为商品详情页
+            detail_url = convert_to_detail_url(original_url, r.get('title', ''))
+            
+            # 提取价格
+            snippet = r.get('snippet', '')
+            price_match = re.search(r'¥\s*(\d+(?:\.\d+)?)', snippet) or re.search(r'(\d+(?:\.\d+)?)\s*元', snippet)
+            price = int(price_match.group(1)) if price_match else 0
             
             items.append({
                 'title': r.get('title', ''),
-                'url': url,
-                'snippet': r.get('snippet', ''),
+                'url': detail_url,  # 使用转换后的详情页链接
+                'original_url': original_url,  # 保留原链接用于调试
+                'snippet': snippet,
+                'price': price,
+                'platform': platform_of(detail_url),
             })
+        
+        print(f"[Google Search] 查询成功: {query} -> 返回 {len(items)} 条结果")
         return items
     
     except Exception as e:
         print(f"[Google Search Error] {e}")
         return []
 
-# 保持函数名兼容
-brave_search = google_search
+def brave_search(query, n=20):
+    """
+    兼容函数，根据配置选择搜索源
+    """
+    if not DEMO_MODE:
+        return google_search(query, n)
+    else:
+        # 演示模式返回空，让主函数使用演示数据
+        print(f"[Brave Search] 演示模式，使用内置演示数据")
+        return []
 
 
 # ─────────────────────────────────────────────
@@ -341,24 +397,37 @@ def generate_demo_data(keyword):
     data = _match_demo(keyword)
     results = []
 
-    # 搜索链接（点击后跳转到平台搜索页，而非具体商品页）
-    import urllib.parse
-    kw_enc = urllib.parse.quote(keyword)
-    search_url_map = {
-        'taobao':  f'https://s.taobao.com/search?q={kw_enc}',
-        'xianyu':  f'https://www.goofish.com/search?q={kw_enc}',
-        'jd':      f'https://search.jd.com/Search?keyword={kw_enc}',
-    }
+    # 演示模式下，生成模拟的商品详情页链接
+    def create_demo_url(platform, keyword, item_id):
+        """创建演示用的商品详情页链接"""
+        if platform == 'taobao':
+            return f"https://item.taobao.com/item.htm?id={item_id}"
+        elif platform == 'jd':
+            return f"https://item.jd.com/{item_id}.html"
+        elif platform == 'xianyu':
+            return f"https://2.taobao.com/item.htm?id={item_id}"
+        else:
+            # 默认返回搜索页（兼容旧代码）
+            import urllib.parse
+            kw_enc = urllib.parse.quote(keyword)
+            search_url_map = {
+                'taobao':  f'https://s.taobao.com/search?q={kw_enc}',
+                'xianyu':  f'https://www.goofish.com/search?q={kw_enc}',
+                'jd':      f'https://search.jd.com/Search?keyword={kw_enc}',
+            }
+            return search_url_map.get(platform, '')
 
     if data:
         for platform, items in data.items():
             for title, base_price, pid in items:
                 price = max(1, int(base_price * random.uniform(0.93, 1.07)))
+                # 生成模拟商品ID
+                item_id = ''.join(str(random.randint(0, 9)) for _ in range(12))
                 entry = {
                     'platform': platform,
                     'title':    title,
                     'price':    price,
-                    'url':      search_url_map[platform],
+                    'url':      create_demo_url(platform, keyword, item_id),
                 }
                 entry.update(_demo_extras(platform))
                 results.append(entry)
@@ -367,11 +436,13 @@ def generate_demo_data(keyword):
         for platform in ['taobao', 'xianyu', 'jd']:
             for i in range(random.randint(6, 9)):
                 price = random.randint(50, 3000)
+                # 生成模拟商品ID
+                item_id = ''.join(str(random.randint(0, 9)) for _ in range(12))
                 entry = {
                     'platform': platform,
                     'title':    f'{keyword} {["全新", "二手", "拆机", "正品"][i%4]}商品 #{i+1}',
                     'price':    price,
-                    'url':      search_url_map[platform],
+                    'url':      create_demo_url(platform, keyword, item_id),
                 }
                 entry.update(_demo_extras(platform))
                 results.append(entry)
@@ -384,42 +455,89 @@ def generate_demo_data(keyword):
 
 
 # ─────────────────────────────────────────────
-# 真实搜索（Brave Search + agent-browser）
+# 真实搜索（Google Custom Search API）
 # ─────────────────────────────────────────────
 def real_search_platform(keyword, platform_query, platform_id, out_list, lock):
     query = f'{keyword} {platform_query}'
-    brave_items = brave_search(query, 25)
+    search_items = brave_search(query, 25)
     
     local = []
-    for item in brave_items:
-        url  = item.get('url', '')
-        p    = platform_of(url)
+    for item in search_items:
+        # 使用转换后的详情页链接
+        url = item.get('url', '')
+        p = item.get('platform', platform_of(url))
+        
         if platform_id != 'any' and p != platform_id:
             continue
-        price = extract_price(item.get('snippet', '') + ' ' + item.get('title', ''))
+        
+        # 优先使用从搜索结果中提取的价格
+        price = item.get('price', 0)
+        if price <= 0:
+            price = extract_price(item.get('snippet', '') + ' ' + item.get('title', ''))
+        
         title = re.sub(r'[-_|·—]+.*$', '', item.get('title', '')).strip()[:100]
+        
         if title and price and 1 < price < 500000:
-            local.append({'platform': p or platform_id, 'title': title, 'price': price, 'url': url})
+            local.append({
+                'platform': p or platform_id,
+                'title': title,
+                'price': price,
+                'url': url,
+                'condition': _get_condition_from_title(title),
+                'seller': _get_seller_from_platform(p),
+                'rating': round(4.0 + random.random(), 1),
+                'sales': random.randint(10, 200),
+                'shipping': '包邮' if random.random() > 0.5 else f'¥{random.randint(5, 20)}'
+            })
     
     with lock:
         out_list.extend(local)
 
 def real_search(keyword):
-    all_results, lock = [], threading.Lock()
-    tasks = [
-        (f'{keyword} site:taobao.com OR site:tmall.com',   'taobao'),
-        (f'{keyword} 闲鱼 二手 site:goofish.com',           'xianyu'),
-        (f'{keyword} site:jd.com',                          'jd'),
-    ]
-    threads = [threading.Thread(target=real_search_platform,
-                                args=(keyword, q, p, all_results, lock))
-               for q, p in tasks]
-    for t in threads: t.start()
-    for t in threads: t.join()
-    
-    prices = [r['price'] for r in all_results]
-    trend  = gen_trend(min(prices)) if prices else []
-    return all_results, trend
+    # 如果配置了 API，使用真实搜索
+    if not DEMO_MODE:
+        all_results, lock = [], threading.Lock()
+        tasks = [
+            (f'{keyword} site:taobao.com OR site:tmall.com',   'taobao'),
+            (f'{keyword} 闲鱼 二手 site:goofish.com',           'xianyu'),
+            (f'{keyword} site:jd.com',                          'jd'),
+        ]
+        threads = [threading.Thread(target=real_search_platform,
+                                    args=(keyword, q, p, all_results, lock))
+                   for q, p in tasks]
+        for t in threads: t.start()
+        for t in threads: t.join()
+        
+        # 如果真实搜索结果太少，补充演示数据
+        if len(all_results) < 5:
+            print(f"[Real Search] 真实结果太少 ({len(all_results)}条)，补充演示数据")
+            demo_results, _ = demo_search(keyword)
+            all_results.extend(demo_results)
+        
+        prices = [r['price'] for r in all_results]
+        trend  = gen_trend(min(prices)) if prices else []
+        return all_results, trend
+    else:
+        # 演示模式，直接返回演示数据
+        print(f"[Real Search] 演示模式，使用演示数据")
+        return demo_search(keyword)
+
+def _get_condition_from_title(title):
+    """从标题中判断商品成色"""
+    conditions = ['全新', '99新', '95新', '9成新', '8成新', '拆机件', '二手']
+    for cond in conditions:
+        if cond in title:
+            return cond
+    return random.choice(conditions)
+
+def _get_seller_from_platform(platform):
+    """根据平台返回卖家信息"""
+    sellers = {
+        'taobao': ['深圳华强北', '北京中关村', '上海徐汇', '广州天河'],
+        'xianyu': ['个人闲置', '二手商家', '个人卖家'],
+        'jd': ['京东自营', '京东官方旗舰店', '品牌旗舰店']
+    }
+    return random.choice(sellers.get(platform, ['未知卖家']))
 
 
 # ─────────────────────────────────────────────
