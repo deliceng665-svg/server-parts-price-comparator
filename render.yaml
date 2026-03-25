@@ -7,3 +7,11 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
+      - key: DEMO_MODE
+        value: "false"
+      # 在 Render 后台手动添加以下两个环境变量：
+      # Dashboard -> Environment -> Add Environment Variable
+      # 1. Key: GOOGLE_API_KEY
+      #    Value: 你的 Google Custom Search API Key
+      # 2. Key: GOOGLE_CSE_ID
+      #    Value: 你的 Custom Search Engine ID

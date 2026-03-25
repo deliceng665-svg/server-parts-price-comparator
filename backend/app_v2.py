@@ -25,7 +25,7 @@ if not os.path.exists(_static_test):
         # 再尝试上一级
         BASE_DIR = os.path.dirname(BASE_DIR)
 BRAVE_SEARCH_JS = os.path.expanduser('~/.workbuddy/skills/brave-search/search.js')
-DEMO_MODE = os.getenv('DEMO_MODE', 'true').lower() == 'true'
+DEMO_MODE = os.getenv('DEMO_MODE', 'false').lower() == 'true'  # 默认关闭演示模式
 SESSION_NAME = "parts-search"
 PORT = int(os.getenv('PORT', 5001))
 
@@ -34,31 +34,80 @@ CORS(app, origins='*')
 
 
 # ─────────────────────────────────────────────
-# Brave Search
+# Google Custom Search API（免费方案）
 # ─────────────────────────────────────────────
-def brave_search(query, n=20):
+import urllib.request
+import urllib.parse
+import ssl
+
+# Google Custom Search API 配置
+GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY', '')
+GOOGLE_CSE_ID = os.getenv('GOOGLE_CSE_ID', '')
+
+def google_search(query, n=20):
+    """
+    使用 Google Custom Search JSON API 搜索
+    免费额度：每天100次查询
+    文档：https://developers.google.com/custom-search/v1/overview
+    """
+    if not GOOGLE_API_KEY or not GOOGLE_CSE_ID:
+        print("[Google Search] 未配置 API Key 或 CSE ID，返回空结果")
+        return []
+    
     try:
-        r = subprocess.run(
-            f'node {BRAVE_SEARCH_JS} "{query}" -n {n}',
-            shell=True, capture_output=True, text=True, timeout=30
-        )
-        return _parse_brave(r.stdout)
+        # 构建请求
+        base_url = "https://www.googleapis.com/customsearch/v1"
+        params = {
+            'key': GOOGLE_API_KEY,
+            'cx': GOOGLE_CSE_ID,
+            'q': query,
+            'num': min(n, 10),  # Google API 单次最多10条
+            'lr': 'lang_zh-CN',
+            'gl': 'cn',
+            'cr': 'countryCN',
+            'safe': 'off',
+        }
+        
+        url = f"{base_url}?{urllib.parse.urlencode(params)}"
+        
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        
+        req = urllib.request.Request(url)
+        req.add_header('Accept', 'application/json')
+        
+        with urllib.request.urlopen(req, timeout=15, context=ctx) as response:
+            data = json.loads(response.read().decode('utf-8'))
+        
+        # 解析结果
+        items = []
+        results = data.get('items', [])
+        for r in results[:n]:
+            # 提取商品详情页链接（优先使用淘宝/闲鱼/京东的商品详情页）
+            url = r.get('link', '')
+            
+            # 如果是淘宝搜索页，尝试提取商品ID转为详情页
+            if 's.taobao.com' in url and 'id=' in url:
+                # 提取商品ID
+                import re
+                match = re.search(r'id=(\d+)', url)
+                if match:
+                    url = f"https://item.taobao.com/item.htm?id={match.group(1)}"
+            
+            items.append({
+                'title': r.get('title', ''),
+                'url': url,
+                'snippet': r.get('snippet', ''),
+            })
+        return items
+    
     except Exception as e:
-        print(f"[Brave] {e}")
+        print(f"[Google Search Error] {e}")
         return []
 
-def _parse_brave(text):
-    items, cur = [], {}
-    for line in text.split('\n'):
-        line = line.strip()
-        if line.startswith('--- Result'):
-            if cur: items.append(cur)
-            cur = {}
-        elif line.startswith('Title:'):   cur['title']   = line[6:].strip()
-        elif line.startswith('Link:'):    cur['url']     = line[5:].strip()
-        elif line.startswith('Snippet:'): cur['snippet'] = line[8:].strip()
-    if cur: items.append(cur)
-    return items
+# 保持函数名兼容
+brave_search = google_search
 
 
 # ─────────────────────────────────────────────
