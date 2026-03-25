@@ -557,44 +557,48 @@ def static_files(path):
 
 @app.route('/api/search', methods=['POST'])
 def search():
-    body = request.get_json() or {}
-    raw  = body.get('keywords') or body.get('keyword') or ''
-    
-    # 批量：逗号 / 换行 分隔
-    keywords = [k.strip() for k in re.split(r'[,，\n]+', raw) if k.strip()]
-    if not keywords:
-        return jsonify({'error': '请输入搜索关键词'}), 400
-    
-    batch = []
-    for kw in keywords:
-        results, trend = search_keyword(kw)
-        if not results:
-            continue
-        prices = [r['price'] for r in results]
-        batch.append({
-            'keyword':  kw,
-            'results':  results,
-            'count':    len(results),
-            'trend':    trend,
-            'stats': {
-                'min':    min(prices),
-                'max':    max(prices),
-                'avg':    round(sum(prices) / len(prices)),
-                'median': sorted(prices)[len(prices) // 2],
-                'by_platform': {
-                    p: {
-                        'min': min(r['price'] for r in results if r['platform'] == p),
-                        'max': max(r['price'] for r in results if r['platform'] == p),
-                        'avg': round(sum(r['price'] for r in results if r['platform'] == p)
-                                     / len([r for r in results if r['platform'] == p]))
+    try:
+        body = request.get_json() or {}
+        raw  = body.get('keywords') or body.get('keyword') or ''
+        
+        # 批量：逗号 / 换行 分隔
+        keywords = [k.strip() for k in re.split(r'[,，\n]+', raw) if k.strip()]
+        if not keywords:
+            return jsonify({'error': '请输入搜索关键词'}), 400
+        
+        batch = []
+        for kw in keywords:
+            results, trend = search_keyword(kw)
+            if not results:
+                continue
+            prices = [r['price'] for r in results]
+            batch.append({
+                'keyword':  kw,
+                'results':  results,
+                'count':    len(results),
+                'trend':    trend,
+                'stats': {
+                    'min':    min(prices),
+                    'max':    max(prices),
+                    'avg':    round(sum(prices) / len(prices)),
+                    'median': sorted(prices)[len(prices) // 2],
+                    'by_platform': {
+                        p: {
+                            'min': min(r['price'] for r in results if r['platform'] == p),
+                            'max': max(r['price'] for r in results if r['platform'] == p),
+                            'avg': round(sum(r['price'] for r in results if r['platform'] == p)
+                                         / len([r for r in results if r['platform'] == p]))
+                        }
+                        for p in ['taobao', 'xianyu', 'jd']
+                        if any(r['platform'] == p for r in results)
                     }
-                    for p in ['taobao', 'xianyu', 'jd']
-                    if any(r['platform'] == p for r in results)
                 }
-            }
-        })
-    
-    return jsonify({'batch': batch, 'demo_mode': DEMO_MODE})
+            })
+        
+        return jsonify({'batch': batch, 'demo_mode': DEMO_MODE})
+    except Exception as e:
+        import traceback
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 
 
 @app.route('/health')
