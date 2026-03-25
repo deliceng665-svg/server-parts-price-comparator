@@ -104,8 +104,8 @@ def duckduckgo_search(query, n=20):
         print(f"[DuckDuckGo Search Error] {e}")
         return []
 
-# 演示模式配置
-DEMO_MODE = os.getenv('DEMO_MODE', 'false').lower() == 'true'
+# 演示模式配置 - 临时启用演示模式保证可用
+DEMO_MODE = os.getenv('DEMO_MODE', 'true').lower() == 'true'
 
 def extract_item_id(url):
     """从各种电商链接中提取商品ID"""
